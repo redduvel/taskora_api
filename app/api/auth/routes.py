@@ -5,6 +5,8 @@ from ...services.database import mongo
 from ...utils.conveter import serialize_cursor, serialize_document
 import jwt
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+import bcrypt
+import datetime as dt
 
 auth_blueprint = Blueprint('auth', __name__)
 
@@ -73,3 +75,56 @@ def get_me():
         "user": serialize_document(find_user),
         "access_token": access_token
     }), 201
+
+
+@auth_blueprint.route('/signup', methods=['POST'])
+def signup():
+    data = request.json
+
+    email = data['email']
+    phone_number = data['phone_number']
+    password = data['password']
+    repeat_password = data['repeat_password']
+
+    # search by email
+    find_user = mongo.db.users.find_one({"email": email})
+    if find_user is not None:
+        return jsonify({
+            "result": "failed", 
+            "message": "A user with this email already exists."
+        }), 409
+    
+    # search by phone number 
+    find_user = mongo.db.users.find_one({"phone_number": phone_number})
+    if find_user is not None:
+        return jsonify({
+            "result": "failed",
+            "message": "A user with this number already exists.",
+        }), 409
+    
+    if password != repeat_password:
+        return jsonify({
+            "result": "failed", 
+            "message": "Password mismatch."
+        }), 401
+    
+    data.pop("repeat_password", None)
+    data['password'] = bcrypt.hashpw(password.encode(encoding="utf-8") , bcrypt.gensalt())
+    data['createdAt'] = dt.datetime.now()
+    data['isDeleted'] = False
+
+    insert_user = mongo.db.users.insert_one(data)
+    if insert_user.inserted_id:
+        find_user = mongo.db.users.find_one(insert_user.inserted_id)
+        find_user.pop("password", None)
+
+        access_token = create_access_token(identity={'_id': str(insert_user.inserted_id)})
+
+        return jsonify({
+            "result": "success",
+            "message": "User successfully registered.",
+            "data": {
+                "user": serialize_document(find_user),
+                "access_token": access_token
+            }
+        }), 201
